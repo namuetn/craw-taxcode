@@ -7,6 +7,8 @@ import argparse
 from bs4 import BeautifulSoup
 import multiprocessing
 from pymongo import MongoClient
+from requests.adapters import HTTPAdapter
+from urllib3.util.retry import Retry
 
 
 def connect_mongo():
@@ -24,8 +26,9 @@ def get_data_input():
     return args.url
 
 
-def get_last_page(url):
-    response = requests.get(url)
+def get_last_page(url, session):
+    # response = requests.get(url)
+    response = session.get(url)
     if response.status_code == 200:
         try:
             soup = BeautifulSoup(response.text, 'lxml')
@@ -40,9 +43,9 @@ def get_last_page(url):
         sys.exit()
 
 
-def crawl_tax_code(url):
-    response = requests.get(url)
-
+def crawl_tax_code(url, session):
+    # response = requests.get(url)
+    response = session.get(url)
     taxcodes = []
     if response.status_code == 200:
         try:
@@ -62,19 +65,26 @@ def crawl_tax_code(url):
     return taxcodes
 
 
-def process_page(page):
-    url_page = url + f'?page={page}'
-    taxcodes = crawl_tax_code(url_page)
-    print(f'[INFO] Crawled Page {page}: {taxcodes} tax codes')
+def process_page(args):
+    url_page, session = args
+    taxcodes = crawl_tax_code(url_page, session)
+    print(f'[INFO] Crawled Page {url_page.split("=")[-1]}: {len(taxcodes)} tax codes')
     return taxcodes
 
 
-if __name__ == '__main__':
-    start_time = time.time()
+def create_session():
+    session = requests.Session()
+    retries = Retry(total=5, backoff_factor=1, status_forcelist=[429, 500, 502, 503, 504])
+    session.mount('http://', HTTPAdapter(max_retries=retries))
+    return session
 
+
+if __name__ == '__main__':
     url = get_data_input()
     print(f'[INFO] Start crawling tax code list: {time}')
-    last_page = int(get_last_page(url))
+
+    session = create_session()
+    last_page = int(get_last_page(url, session))
     batch_size = 1000
 
     all_taxcodes = []
@@ -84,8 +94,11 @@ if __name__ == '__main__':
         # results = pool.map(process_page, range(1, 1001))
         # final_total = sum(results)
         for i in range(1, last_page + 1, batch_size):
+            start_time = time.time()
+
             end_page = min(i + batch_size - 1, last_page)
-            results = pool.map(process_page, range(i, end_page + 1))
+            pages = [(url + f'?page={page}', session) for page in range(i, end_page + 1)]
+            results = pool.map(process_page, pages)
             for result in results:
                 all_taxcodes.extend(result)
             if all_taxcodes:
@@ -93,7 +106,8 @@ if __name__ == '__main__':
                 print(f'[INFO] Inserted {len(all_taxcodes)} tax codes to MongoDB')
                 all_taxcodes.clear()
 
-    end_time = time.time()
-    execution_time = end_time - start_time
-    print(f'[INFO] Execute time: {execution_time}')
+            end_time = time.time()
+            execution_time = end_time - start_time
+            print(f'[INFO] Execute time: {execution_time}')
+
     print(f'[INFO] Crawl tax code list successfully and saved to MongoDB.')
