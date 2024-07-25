@@ -1,23 +1,19 @@
 import os
 import sys
 import json
+import time
 import requests
 import argparse
 from bs4 import BeautifulSoup
 import multiprocessing
+from pymongo import MongoClient
 
 
-def append_to_json_file(file_save, data):
-    try:
-        with open(file_save, 'r', encoding='utf-8') as f:
-            existing_data = json.load(f)
-    except FileNotFoundError:
-        existing_data = []
-
-    existing_data.extend(data)
-
-    with open(file_save, 'w', encoding='utf-8') as f:
-        json.dump(existing_data, f, ensure_ascii=False, indent=4)
+def connect_mongo():
+    client = MongoClient('mongodb://localhost:27017/')
+    db = client['taxcode_db']
+    collection = db['taxcodes']
+    return collection
 
 
 def get_data_input():
@@ -48,7 +44,6 @@ def crawl_tax_code(url):
     response = requests.get(url)
 
     taxcodes = []
-    total_taxcode = 0
     if response.status_code == 200:
         try:
             soup = BeautifulSoup(response.text, 'lxml')
@@ -57,47 +52,48 @@ def crawl_tax_code(url):
             for taxcode_element in taxcodes_element:
                 taxcode = taxcode_element.next_sibling.next_sibling.text
                 taxcodes.append(taxcode)
-                total_taxcode += 1
         except Exception as e:
             print(f'[ERROR] An error occurred. Detail: {e}')
             sys.exit()
-
-        append_to_json_file('./dist/taxcodes.json', taxcodes)
-        return total_taxcode
     else:
         print(f'[ERROR] Request fail. Status code: {response.status_code}. Detail: {response.reason}')
         sys.exit()
 
+    return taxcodes
+
 
 def process_page(page):
     url_page = url + f'?page={page}'
-    total_taxcode = crawl_tax_code(url_page)
-    print(f'[INFO] Total of Page {page}: {total_taxcode}')
-    return total_taxcode
+    taxcodes = crawl_tax_code(url_page)
+    print(f'[INFO] Crawled Page {page}: {taxcodes} tax codes')
+    return taxcodes
 
 
 if __name__ == '__main__':
-    city_filename = './dist/cities.json'
-    taxcode_filename = './dist/taxcodes.json'
-    
-    try:
-        os.remove(taxcode_filename)
-    except OSError:
-        pass
-    
+    start_time = time.time()
+
     url = get_data_input()
-    print(f'[INFO] Start crawling text code list ...')
+    print(f'[INFO] Start crawling tax code list: {time}')
     last_page = int(get_last_page(url))
+    batch_size = 1000
 
-    final_total = 0
-    # for page in range(1, last_page):
-    #     url_page = url + f'?page={page}'
+    all_taxcodes = []
+    collection = connect_mongo()
 
-    #     total_taxcode = crawl_tax_code(url_page, taxcode_filename)
-    #     final_total += total_taxcode
-    #     print(f'[INFO] Total of Page {page}: {final_total}')
     with multiprocessing.Pool() as pool:
-        results = pool.map(process_page, range(1, 1001))
-        final_total = sum(results)
+        # results = pool.map(process_page, range(1, 1001))
+        # final_total = sum(results)
+        for i in range(1, last_page + 1, batch_size):
+            end_page = min(i + batch_size - 1, last_page)
+            results = pool.map(process_page, range(i, end_page + 1))
+            for result in results:
+                all_taxcodes.extend(result)
+            if all_taxcodes:
+                collection.insert_many([{'taxcode': taxcode} for taxcode in all_taxcodes])
+                print(f'[INFO] Inserted {len(all_taxcodes)} tax codes to MongoDB')
+                all_taxcodes.clear()
 
-    print(f'[INFO] Crawl tax code list successfully. Save at {taxcode_filename}')    
+    end_time = time.time()
+    execution_time = end_time - start_time
+    print(f'[INFO] Execute time: {execution_time}')
+    print(f'[INFO] Crawl tax code list successfully and saved to MongoDB.')
