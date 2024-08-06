@@ -1,35 +1,16 @@
 import cv2
-from PIL import Image
+import numpy as np
 
 # Đọc ảnh
-img_path = './model_bypass_captcha/captcha_folder/yhfhb.png'
-output_path = 'yhfhb_wb.png'
-original_image = Image.open(img_path).convert("RGBA")
-
-width, height = original_image.size
-
-new_width = int(width * 1.2)
-new_height = int(height * 1.2)
-
-new_image = Image.new('RGBA', (new_width, new_height), (255, 255, 255, 255))
-
-paste_position = ((new_width - width) // 2, (new_height - height) // 2)
-
-new_image.paste(original_image, paste_position, original_image)
-
-new_image.save(output_path)
-
-
-# - ------------------------------------------------------------
-image = cv2.imread(output_path)
+image = cv2.imread('./2aare_wb.png')
 gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
 
 # Áp dụng GaussianBlur để làm mờ ảnh
 blurred = cv2.GaussianBlur(gray, (5, 5), 0)
-# blurred = cv2.medianBlur(image, 3) 
+
 # Sử dụng adaptive thresholding để tạo ảnh nhị phân
 binary = cv2.adaptiveThreshold(blurred, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, 
-                               cv2.THRESH_BINARY, 155, 140)
+                               cv2.THRESH_BINARY_INV, 151, 122)
 
 # Dùng phép toán hình thái học để loại bỏ đường lưới
 kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (3, 3))
@@ -44,10 +25,10 @@ for contour in contours:
 # Sử dụng inpainting để khôi phục các vùng bị ảnh hưởng
 result = cv2.inpaint(image, binary, 3, cv2.INPAINT_TELEA)
 
-# # Lưu ảnh kết quả
-cv2.imwrite(f'res_{output_path}', binary)
+# Lưu ảnh kết quả
+cv2.imwrite('output_image.png', result)
 
 # Hiển thị ảnh kết quả
-# cv2.imshow('Result', binary)
+# cv2.imshow('Result', result)
 # cv2.waitKey(0)
 # cv2.destroyAllWindows()

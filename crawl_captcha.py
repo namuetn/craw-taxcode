@@ -17,7 +17,7 @@ for i in range(1000):
         const imgSrc = imgElement.src;
         const link = document.createElement('a');
         link.href = imgSrc;
-        link.download = 'captcha111111.png';
+        link.download = 'captcha.png';
         document.body.appendChild(link);
         link.click();
     '''
