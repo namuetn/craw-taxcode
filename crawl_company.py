@@ -3,6 +3,9 @@ import time
 import asyncio
 import ddddocr
 import requests
+import numpy as np
+from PIL import Image
+from io import BytesIO
 from pathlib import Path
 from bs4 import BeautifulSoup
 from selenium import webdriver
@@ -22,11 +25,12 @@ def connection_database():
     return collection
 
 
-def extract_image_to_text(path, ocr):
-    image = open(path, "rb").read()
-    text = ocr.classification(image, png_fix=True)
+def extract_image_to_text(image_data, ocr):
+    # image = open(path, "rb").read()
+    text = ocr.classification(image_data, png_fix=True)
 
     return text if text != "" else "no"
+
 
 
 def check_exists_folder(path):
@@ -52,11 +56,19 @@ def check_error_message(driver, tag):
 def fill_captcha(driver, ocr):
     captcha_input = driver.find_element(by=By.ID, value="captcha")
     captcha_screenshot = driver.find_element(by=By.XPATH, value="//*[@id='tcmst']/form/table/tbody/tr[6]/td[2]/table/tbody/tr/td[2]")
-    check_exists_folder('./screenshots')
-    captcha_path = "./screenshots/captcha-screenshot-1.png"
-    captcha_screenshot.screenshot(captcha_path)
-    preprocess_captcha_image(captcha_path)
-    captcha_text = extract_image_to_text(captcha_path, ocr)
+
+    # Chụp ảnh captcha vào bộ nhớ
+    captcha_image = captcha_screenshot.screenshot_as_png
+    image = Image.open(BytesIO(captcha_image))
+
+    # Chuyển đổi ảnh sang định dạng OpenCV
+    opencv_image = cv2.cvtColor(np.array(image), cv2.COLOR_RGB2BGR)
+
+    # Tiền xử lý ảnh trực tiếp
+    processed_image = preprocess_captcha_image(opencv_image)
+
+    processed_image_data = cv2.imencode('.png', processed_image)[1].tobytes()
+    captcha_text = extract_image_to_text(processed_image_data, ocr)
     captcha_input.send_keys(captcha_text)
 
     submit_button = driver.find_element(by=By.CLASS_NAME, value="subBtn")
@@ -65,15 +77,15 @@ def fill_captcha(driver, ocr):
     return captcha_text
 
 
-def preprocess_captcha_image(path):
-    image = cv2.imread(path)
+def preprocess_captcha_image(image):
     gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
 
     # Áp dụng GaussianBlur để làm mờ ảnh
     blurred = cv2.GaussianBlur(gray, (5, 5), 0)
     binary = cv2.adaptiveThreshold(blurred, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, 
-                                cv2.THRESH_BINARY, 155, 122)
-    cv2.imwrite(path, binary)
+                                   cv2.THRESH_BINARY, 155, 122)
+
+    return binary
 
 
 def convert_business_line_to_string(business_list):
