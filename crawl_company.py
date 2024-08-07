@@ -9,20 +9,13 @@ from io import BytesIO
 from pathlib import Path
 from bs4 import BeautifulSoup
 from selenium import webdriver
-from pymongo import MongoClient
 from selenium.webdriver.common.by import By
+from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.support.ui import WebDriverWait
 from webdriver_manager.chrome import ChromeDriverManager
 from selenium.common.exceptions import NoSuchElementException
 from selenium.webdriver.support import expected_conditions as EC
 from selenium.webdriver.chrome.service import Service as ChromeService
-
-def connection_database():
-    client = MongoClient('mongodb://localhost:27017/')
-    db = client['taxcode_db']
-    collection = db['taxcodes']
-
-    return collection
 
 
 def extract_image_to_text(image_data, ocr):
@@ -71,8 +64,9 @@ def fill_captcha(driver, ocr):
     captcha_text = extract_image_to_text(processed_image_data, ocr)
     captcha_input.send_keys(captcha_text)
 
-    submit_button = driver.find_element(by=By.CLASS_NAME, value="subBtn")
-    submit_button.click()
+    wait = WebDriverWait(driver, 10)
+    submit_button = wait.until(EC.element_to_be_clickable((By.CLASS_NAME, "subBtn")))
+    driver.execute_script("arguments[0].click();", submit_button)
 
     return captcha_text
 
@@ -81,9 +75,9 @@ def preprocess_captcha_image(image):
     gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
 
     # Áp dụng GaussianBlur để làm mờ ảnh
-    blurred = cv2.GaussianBlur(gray, (5, 5), 0)
-    binary = cv2.adaptiveThreshold(blurred, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, 
-                                   cv2.THRESH_BINARY, 155, 122)
+    blurred = cv2.GaussianBlur(gray, (3, 3), 0)
+    binary = cv2.adaptiveThreshold(blurred, 250, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, 
+                                cv2.THRESH_BINARY, 181, 129)
 
     return binary
 
@@ -96,7 +90,7 @@ def convert_business_line_to_string(business_list):
 
 
 def convert_status_field(note):
-    active_status = ['đang hoạt động', 'tạm ngừng hoạt động']
+    active_status = ['đang hoạt động', 'tạm ngừng hoạt động', 'tạm nghỉ kinh doanh']
     inactive_status = ['ngừng hoạt động', 'không hoạt động']
     for status in active_status:
         if status in note:
@@ -142,7 +136,16 @@ async def crawl_detail_company(driver, company, taxcode):
         crawl_business_line(driver, extra_data[5], company, taxcode)
     ]
 
-    await asyncio.gather(*tasks)
+    results = await asyncio.gather(*tasks)
+
+    company['raw_data'].update({
+        "managing_enterprise": results[0],
+        "member_unit": results[1],
+        "subordinate_unit": results[2],
+        "representative_office": results[3],
+        "type_tax_payable": results[4],
+        "business_line": results[5]
+    })
 
     business_line = convert_business_line_to_string(company['raw_data']['business_line'])
 
@@ -213,11 +216,11 @@ def create_headers(driver):
 async def crawl_managing_enterprise(driver, button, company, taxcode):
     button.click()
     headers = create_headers(driver)
-    data = {
+    taxcode_json = {
         'tin': taxcode
     }
 
-    response = requests.post('https://tracuunnt.gdt.gov.vn/tcnnt/doanhnghiepchuquan.jsp', headers=headers, data=data, verify=False)
+    response = requests.post('https://tracuunnt.gdt.gov.vn/tcnnt/doanhnghiepchuquan.jsp', headers=headers, data=taxcode_json, verify=False)
     soup = BeautifulSoup(response.text, 'lxml')
     rows = soup.find_all('tr')
     if len(rows) <= 1:
@@ -239,15 +242,17 @@ async def crawl_managing_enterprise(driver, button, company, taxcode):
         "managing_enterprise": data
     })
 
+    return data
+
 
 async def crawl_member_unit(driver, button, company, taxcode):
     button.click()
     headers = create_headers(driver)
-    data = {
+    taxcode_json = {
         'tin': taxcode
     }
 
-    response = requests.post('https://tracuunnt.gdt.gov.vn/tcnnt/chinhanh.jsp', headers=headers, data=data, verify=False)
+    response = requests.post('https://tracuunnt.gdt.gov.vn/tcnnt/chinhanh.jsp', headers=headers, data=taxcode_json, verify=False)
     soup = BeautifulSoup(response.text, 'lxml')
     rows = soup.find_all('tr')
     if len(rows) <= 1:
@@ -271,6 +276,8 @@ async def crawl_member_unit(driver, button, company, taxcode):
     company['raw_data'].update({
         "member_unit": data
     })
+
+    return data
     # button.click()
     # time.sleep(0.05)
     # rows = driver.find_elements(by=By.XPATH, value="//*[@id='wap_content']/table/tbody/tr")
@@ -300,11 +307,11 @@ async def crawl_member_unit(driver, button, company, taxcode):
 async def crawl_subordinate_unit(driver, button, company, taxcode):
     button.click()
     headers = create_headers(driver)
-    data = {
+    taxcode_json = {
         'tin': taxcode
     }
 
-    response = requests.post('https://tracuunnt.gdt.gov.vn/tcnnt/tructhuoc.jsp', headers=headers, data=data, verify=False)
+    response = requests.post('https://tracuunnt.gdt.gov.vn/tcnnt/tructhuoc.jsp', headers=headers, data=taxcode_json, verify=False)
     soup = BeautifulSoup(response.text, 'lxml')
     rows = soup.find_all('tr')
     if len(rows) <= 1:
@@ -329,15 +336,17 @@ async def crawl_subordinate_unit(driver, button, company, taxcode):
         "subordinate_unit": data
     })
 
+    return data
+
 
 async def crawl_representative_office(driver, button, company, taxcode):
     button.click()
     headers = create_headers(driver)
-    data = {
+    taxcode_json = {
         'tin': taxcode
     }
 
-    response = requests.post('https://tracuunnt.gdt.gov.vn/tcnnt/daidien.jsp', headers=headers, data=data, verify=False)
+    response = requests.post('https://tracuunnt.gdt.gov.vn/tcnnt/daidien.jsp', headers=headers, data=taxcode_json, verify=False)
     soup = BeautifulSoup(response.text, 'lxml')
     rows = soup.find_all('tr')
     if len(rows) <= 1:
@@ -362,15 +371,17 @@ async def crawl_representative_office(driver, button, company, taxcode):
         "representative_office": data
     })
 
+    return data
+
 
 async def crawl_type_tax_payable(driver, button, company, taxcode):
     button.click()
     headers = create_headers(driver)
-    data = {
+    taxcode_json = {
         'tin': taxcode
     }
 
-    response = requests.post('https://tracuunnt.gdt.gov.vn/tcnnt/loaithue.jsp', headers=headers, data=data, verify=False)
+    response = requests.post('https://tracuunnt.gdt.gov.vn/tcnnt/loaithue.jsp', headers=headers, data=taxcode_json, verify=False)
     soup = BeautifulSoup(response.text, 'lxml')
     rows = soup.find_all('tr')
     if len(rows) <= 1:
@@ -390,15 +401,17 @@ async def crawl_type_tax_payable(driver, button, company, taxcode):
         "type_tax_payable": data
     })
 
+    return data
+
 
 async def crawl_business_line(driver, button, company, taxcode):
     button.click()
     headers = create_headers(driver)
-    data = {
+    taxcode_json = {
         'tin': taxcode
     }
 
-    response = requests.post('https://tracuunnt.gdt.gov.vn/tcnnt/nganhkinhdoanh.jsp', headers=headers, data=data, verify=False)
+    response = requests.post('https://tracuunnt.gdt.gov.vn/tcnnt/nganhkinhdoanh.jsp', headers=headers, data=taxcode_json, verify=False)
     soup = BeautifulSoup(response.text, 'lxml')
     rows = soup.find_all('tr')
     if len(rows) <= 1:
@@ -419,27 +432,18 @@ async def crawl_business_line(driver, button, company, taxcode):
         "business_line": data
     })
 
+    return data
 
-async def crawl_all_company():
-    # define ocr captcha images
-    ocr = ddddocr.DdddOcr()
 
-    # try:
+async def crawl_all_company(ocr, driver, options, data_taxcode):
     start_time = time.time()
-
-    driver = webdriver.Chrome(service=ChromeService(ChromeDriverManager().install()))
-    # driver = webdriver.Chrome()
-
-    driver.get("https://tracuunnt.gdt.gov.vn/tcnnt/mstdn.jsp")
-    end_time1 = time.time()
-    print(f"[INFO] Executime of selenium: {end_time1-start_time}")
     count_retry = 0
     max_retry = 10
     while True:
         wait_until_page_finishes_loading(driver)
 
         taxcodes_input = driver.find_element(by=By.NAME, value="mst")
-        taxcodes_input.send_keys('0107899950')
+        taxcodes_input.send_keys(data_taxcode)
 
         captcha_text = fill_captcha(driver, ocr)
 
@@ -452,8 +456,8 @@ async def crawl_all_company():
             break
 
         if check_error_message(driver, "p") == "Vui lòng nhập đúng mã xác nhận!":
-            print("[ERROR] Captcha is wrong")
             count_retry += 1
+            print(f"[INFO] Captcha is wrong. Retry {count_retry}/{max_retry}")
             if count_retry == max_retry:
                 print('[ERROR] Maximum retry reached')
                 break
@@ -468,12 +472,12 @@ async def crawl_all_company():
                 break
 
         taxcode, company = crawl_overall_company(rows[1]) # rows[1] bởi vì chỉ crawl chính xác MST đó thôi, MST con thì sẽ được crawl khi fill vào input
-        company = crawl_detail_company(driver, company, taxcode)
+        company = await crawl_detail_company(driver, company, taxcode)
 
         break
     end_time = time.time()
     print(f'[INFO] Execute time all: {end_time - start_time}')
-    abc=123
+    return company
     # except Exception as e:
     #     print(f'[ERROR] {e}')
     #     driver.quit
@@ -484,4 +488,5 @@ async def crawl_all_company():
 if __name__ == '__main__':
     screenshot_folder = 'screenshot'
     print('[INFO] Start crawl tax code...')
-    asyncio.run(crawl_all_company())
+    # final_result =  asyncio.run(crawl_all_company())
+    # print(final_result)
