@@ -1,0 +1,1 @@
+print("anh nom cuc")
