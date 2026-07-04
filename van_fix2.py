@@ -1,1 +1,1 @@
-print("van an cuc")
+print("anh nom cuc")
